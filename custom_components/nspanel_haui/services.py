@@ -229,29 +229,20 @@ async def _handle_send_notification(hass: HomeAssistant, call: ServiceCall) -> N
     notif_type: str = call.data.get("type", "info")
     force_show: bool = call.data.get("force_show", False)
 
-    data: dict[str, Any] = {
-        "title": call.data["title"],
-        "message": call.data.get("message", ""),
-        "icon": call.data.get("icon", ""),
-        "notif_type": notif_type,
-        "force_show": force_show,
-    }
-    if timeout > 0:
-        data["timeout"] = timeout
-        action = (
-            NotificationAction.SEND_NOTIFICATION_PERSISTENT_WITH_TIMEOUT
-            if persistent
-            else NotificationAction.SEND_NOTIFICATION_WITH_TIMEOUT
-        )
-    else:
-        action = (
-            NotificationAction.SEND_NOTIFICATION_PERSISTENT
-            if persistent
-            else NotificationAction.SEND_NOTIFICATION
-        )
-
     def _notify_action(app: Any, dev_name: str) -> None:
-        _publish_action(app, action, data)
+        notification = app.controller.get("notification")
+        if notification is None:
+            _LOGGER.warning("send_notification: notification controller missing on '%s'", dev_name)
+            return
+        notification.send_notification(
+            title=call.data["title"],
+            message=call.data.get("message", ""),
+            icon=call.data.get("icon", ""),
+            timeout=timeout,
+            persistent=persistent,
+            notif_type=notif_type,
+            force_show=force_show,
+        )
 
     await _device_action(hass, call, action=_notify_action)
 
