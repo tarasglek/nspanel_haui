@@ -5,7 +5,7 @@ build-backend = "setuptools.backends.legacy:build"
 [project]
 name = "nspanel-haui"
 # Version kept in sync with custom_components/nspanel_haui/manifest.json (source of truth)
-version = "0.3.0"
+version = "0.3.3"
 description = "NSPanel HAUI custom integration for Home Assistant"
 requires-python = ">=3.12"
 
