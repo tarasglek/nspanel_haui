@@ -41,9 +41,6 @@ def _install_ha_stubs() -> None:
 _install_ha_stubs()
 
 import pytest  # noqa: E402
-from nspanel_haui.haui.mapping.const import (  # noqa: E402
-    NotificationAction,
-)
 from nspanel_haui.services import (  # noqa: E402
     DOMAIN,
     SERVICE_CLOSE_PANEL,
@@ -93,13 +90,28 @@ def mock_esphome_ctrl():
     return ctrl
 
 
+@pytest.fixture
+def mock_notification_ctrl():
+    """Create a notification controller double."""
+    return MagicMock()
+
+
 def _make_app(
-    mock_nav, mock_esphome_ctrl, *, ha_device_id: str = "dev_1", name: str = "test_device"
+    mock_nav,
+    mock_esphome_ctrl,
+    mock_notification_ctrl=None,
+    *,
+    ha_device_id: str = "dev_1",
+    name: str = "test_device",
 ):
     """Create a minimal NSPanelHAUI-like mock."""
     app = MagicMock()
     app._ha_device_id = ha_device_id
-    app.controller = {"navigation": mock_nav, "esphome": mock_esphome_ctrl}
+    app.controller = {
+        "navigation": mock_nav,
+        "esphome": mock_esphome_ctrl,
+        "notification": mock_notification_ctrl or MagicMock(),
+    }
     app.name = name
     return app
 
@@ -286,10 +298,9 @@ async def test_sleep(mock_hass, mock_nav, mock_esphome_ctrl):
 
 
 @pytest.mark.asyncio
-async def test_set_brightness(mock_hass, mock_nav, mock_esphome_ctrl):
-    """set_brightness publishes ESPAction.SET_BRIGHTNESS with intensity."""
-    app = _make_app(mock_nav, mock_esphome_ctrl)
-    app = _make_app(mock_nav, mock_esphome_ctrl)
+async def test_set_brightness(mock_hass, mock_nav, mock_esphome_ctrl, mock_notification_ctrl):
+    """send_notification delegates the complete option set to the controller."""
+    app = _make_app(mock_nav, mock_esphome_ctrl, mock_notification_ctrl)
     mock_hass.data[DOMAIN] = {"entry_1": {"dev": app}}
 
     from nspanel_haui.services import _handle_send_notification
@@ -299,29 +310,32 @@ async def test_set_brightness(mock_hass, mock_nav, mock_esphome_ctrl):
         "title": "Doorbell",
         "message": "At the door",
         "icon": "mdi:bell",
-        "timeout": 0,
-        "persistent": False,
+        "timeout": 12,
+        "persistent": True,
+        "type": "critical",
+        "force_show": True,
         "device_id": "dev_1",
     }
 
     await _handle_send_notification(mock_hass, call)
 
-    mock_esphome_ctrl.esphome.publish.assert_called_once_with(
-        NotificationAction.SEND_NOTIFICATION,
-        {
-            "title": "Doorbell",
-            "message": "At the door",
-            "icon": "mdi:bell",
-            "notif_type": "info",
-            "force_show": False,
-        },
+    mock_notification_ctrl.send_notification.assert_called_once_with(
+        title="Doorbell",
+        message="At the door",
+        icon="mdi:bell",
+        timeout=12,
+        persistent=True,
+        notif_type="critical",
+        force_show=True,
     )
 
 
 @pytest.mark.asyncio
-async def test_send_notification_persistent_with_timeout(mock_hass, mock_nav, mock_esphome_ctrl):
-    """persistent + timeout selects the persistent-with-timeout action."""
-    app = _make_app(mock_nav, mock_esphome_ctrl)
+async def test_send_notification_persistent_with_timeout(
+    mock_hass, mock_nav, mock_esphome_ctrl, mock_notification_ctrl
+):
+    """persistent + timeout reaches the controller without dropping options."""
+    app = _make_app(mock_nav, mock_esphome_ctrl, mock_notification_ctrl)
     mock_hass.data[DOMAIN] = {"entry_1": {"dev": app}}
 
     from nspanel_haui.services import _handle_send_notification
@@ -338,16 +352,14 @@ async def test_send_notification_persistent_with_timeout(mock_hass, mock_nav, mo
 
     await _handle_send_notification(mock_hass, call)
 
-    mock_esphome_ctrl.esphome.publish.assert_called_once_with(
-        NotificationAction.SEND_NOTIFICATION_PERSISTENT_WITH_TIMEOUT,
-        {
-            "title": "Alarm",
-            "message": "",
-            "icon": "",
-            "timeout": 30,
-            "notif_type": "info",
-            "force_show": False,
-        },
+    mock_notification_ctrl.send_notification.assert_called_once_with(
+        title="Alarm",
+        message="",
+        icon="",
+        timeout=30,
+        persistent=True,
+        notif_type="info",
+        force_show=False,
     )
 
 
