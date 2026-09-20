@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import logging
 from typing import TYPE_CHECKING, Any
@@ -231,6 +232,27 @@ async def _trigger_haui_discovery(hass: HomeAssistant) -> bool:
 
 # ── Auto-discovery ───────────────────────────────────────────────
 _DISCOVERY_INITIALIZED = False
+_DISCOVERY_TASKS: dict[str, asyncio.Task] = {}
+
+
+def _schedule_auto_add_unconfigured_devices(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+) -> asyncio.Task:
+    """Schedule at most one discovery scan for a hub entry."""
+    existing = _DISCOVERY_TASKS.get(entry.entry_id)
+    if existing is not None and not existing.done():
+        return existing
+
+    task = hass.async_create_task(_auto_add_unconfigured_devices(hass, entry))
+    _DISCOVERY_TASKS[entry.entry_id] = task
+
+    def _clear(completed: asyncio.Task) -> None:
+        if _DISCOVERY_TASKS.get(entry.entry_id) is completed:
+            _DISCOVERY_TASKS.pop(entry.entry_id, None)
+
+    task.add_done_callback(_clear)
+    return task
 
 
 async def _register_discovery(hass: HomeAssistant) -> None:
@@ -271,7 +293,7 @@ async def _register_discovery(hass: HomeAssistant) -> None:
             entry = hass.config_entries.async_get_entry(cid)
             if entry and entry.domain == "esphome" and is_haui_device(hass, entry):
                 for hub_entry in hass.config_entries.async_entries(DOMAIN):
-                    hass.async_create_task(_auto_add_unconfigured_devices(hass, hub_entry))
+                    _schedule_auto_add_unconfigured_devices(hass, hub_entry)
                 break
 
     hass.bus.async_listen(
@@ -415,7 +437,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # where mDNS auto-discovery doesn't fire — users add ESPHome
     # entries manually via the ESPHome integration, and this picks
     # them up without requiring a manual "Scan" button press.
-    hass.async_create_task(_auto_add_unconfigured_devices(hass, entry))
+    _schedule_auto_add_unconfigured_devices(hass, entry)
 
     return True
 
@@ -441,7 +463,9 @@ async def _auto_add_unconfigured_devices(hass: HomeAssistant, entry: ConfigEntry
         # Re-enable devices that are already configured but disabled — prevents
         # the common case where the config flow or API created the entry with
         # enabled: False and the user never manually enabled them.
-        existing_devices = list(entry.data.get("devices", []))
+        import copy
+
+        existing_devices = copy.deepcopy(entry.data.get("devices", []))
         needs_update = False
         for dev in existing_devices:
             if dev.get("enabled", True) is False:
@@ -453,20 +477,7 @@ async def _auto_add_unconfigured_devices(hass: HomeAssistant, entry: ConfigEntry
                         "Re-enabled HAUI device '%s' in hub '%s'", dev["name"], entry.title
                     )
 
-        if needs_update:
-            hass.config_entries.async_update_entry(
-                entry,
-                data={**entry.data, "devices": existing_devices},
-            )
-
-        if not unconfigured:
-            if needs_update:
-                await async_reload_entry(hass, entry)
-            return
-
-        import copy
-
-        new_devices = list(entry.data.get("devices", []))
+        new_devices = existing_devices
         for dev in unconfigured:
             new_dev = copy.deepcopy(DEVICE_CONFIG)
             new_dev["name"] = dev["name"]
@@ -480,16 +491,19 @@ async def _auto_add_unconfigured_devices(hass: HomeAssistant, entry: ConfigEntry
                 entry.title,
             )
 
+        if not needs_update and not unconfigured:
+            return
+
         hass.config_entries.async_update_entry(
             entry,
             data={**entry.data, "devices": new_devices},
         )
-        _LOGGER.info(
-            "Auto-added %d device(s) to hub '%s'; reloading",
-            len(unconfigured),
-            entry.title,
-        )
-        await async_reload_entry(hass, entry)
+        if unconfigured:
+            _LOGGER.info(
+                "Auto-added %d device(s) to hub '%s'; reloading",
+                len(unconfigured),
+                entry.title,
+            )
     except Exception:
         _LOGGER.warning(
             "Auto-discovery scan for hub '%s' failed",
@@ -500,6 +514,10 @@ async def _auto_add_unconfigured_devices(hass: HomeAssistant, entry: ConfigEntry
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Stop and unload a NSPanel HAUI config entry."""
+    discovery_task = _DISCOVERY_TASKS.pop(entry.entry_id, None)
+    if discovery_task is not None and not discovery_task.done():
+        discovery_task.cancel()
+
     # Unload entity platforms (notify entities) before removing app data
     await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
 
@@ -547,8 +565,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
 async def async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Reload entry when options change."""
-    await async_unload_entry(hass, entry)
-    await async_setup_entry(hass, entry)
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
