@@ -301,11 +301,11 @@ def _wakeup_harness():
 
 
 def test_first_touch_only_wakes():
-    """First touch after sleep wakes the display but does NOT exit."""
+    """First touch after sleep wakes and exits the non-interactive sleep panel."""
     device, nav = _wakeup_harness()
     device.woke_up = True
     device.check_wakeup()
-    assert len(nav.exit_calls) == 0
+    assert len(nav.exit_calls) == 1
     assert device.woke_up is False
 
 
@@ -318,11 +318,11 @@ def test_second_touch_exits():
 
 
 def test_hardware_button_wakes_on_first_touch():
-    """First hardware button press after sleep wakes but does not exit."""
+    """First hardware button press after sleep wakes and exits."""
     device, nav = _wakeup_harness()
     device.woke_up = True
     device.check_wakeup(from_button=True)
-    assert len(nav.exit_calls) == 0
+    assert len(nav.exit_calls) == 1
     assert device.woke_up is False
 
 
@@ -335,12 +335,12 @@ def test_no_exit_when_no_sleep_or_wakeup_panel_active():
 
 
 def test_first_touch_wakes_when_display_already_on() -> None:
-    """First touch wakes even when the display is already ON (does not exit)."""
+    """First touch exits even when the display is already ON."""
     device, nav = _wakeup_harness()
     device.woke_up = True
     device.device_info["display_state"] = "on"
     device.check_wakeup()
-    assert len(nav.exit_calls) == 0
+    assert len(nav.exit_calls) == 1
     assert device.woke_up is False
 
 
@@ -418,21 +418,21 @@ def test_release_event_sets_device_info_key() -> None:
 
 
 def test_first_touch_wakes_when_display_dim() -> None:
-    """First touch wakes even when the display is dimmed (does not exit)."""
+    """First touch exits even when the display is dimmed."""
     device, nav = _wakeup_harness()
     device.woke_up = True
     device.device_info["display_state"] = "dim"
     device.check_wakeup()
-    assert len(nav.exit_calls) == 0
+    assert len(nav.exit_calls) == 1
     assert device.woke_up is False
 
 
 def test_first_touch_wakes_when_display_unknown() -> None:
-    """First touch wakes even when display_state is not yet known (does not exit)."""
+    """First touch exits even when display_state is not yet known."""
     device, nav = _wakeup_harness()
     device.woke_up = True
     # No display_state in device_info (e.g. not yet received from device).
     del device.device_info["display_state"]
     device.check_wakeup()
-    assert len(nav.exit_calls) == 0
+    assert len(nav.exit_calls) == 1
     assert device.woke_up is False

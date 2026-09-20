@@ -533,10 +533,11 @@ class HAUIDevice(HAUIBase):
         """Exit the sleep / wakeup screen on any touch or hardware-button press.
 
         A single touch-down immediately wakes the display and exits the
-        sleep / wake panel, restoring the home or previous panel.
+        sleep / wake panel, restoring the home or previous panel. The sleep
+        panel is non-interactive, so the waking touch cannot activate a control.
 
         ``woke_up`` — set when the sleep panel opens — is cleared here so
-        the flag does not accumulate, but no longer gates the exit decision.
+        the flag does not accumulate and never gates the exit decision.
         """
         navigation = self.app.controller["navigation"]
         if not navigation.panel:
@@ -550,14 +551,9 @@ class HAUIDevice(HAUIBase):
         if not (on_wakeup_panel or navigation._sleep_panel_active):
             return
 
-        # First touch after sleep just wakes the display — do NOT exit yet.
-        # The ``woke_up`` flag was set by ``open_sleep_panel()`` to swallow
-        # this touch.  Clear it so the *next* touch triggers the exit.
-        if self.woke_up:
-            self.woke_up = False
-            self.log("Not exiting sleep/wakeup screen, just woke up")
-            return
-
+        # The waking touch lands on the non-interactive sleep panel, then
+        # immediately restores the previous/home panel. Never require a second
+        # touch merely to leave the sleep screen.
         self.woke_up = False
         navigation.exit_sleep_to_prev_or_home(self.config)
 
