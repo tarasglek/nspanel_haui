@@ -1,6 +1,14 @@
 ---
 script:
 
+  # Stop any active tone before starting the blocking TFT upload.
+  - id: upload_tft_safe
+    then:
+      - rtttl.stop:
+      - output.turn_off: haui_rtttl_out
+      - delay: 100ms
+      - lambda: id(haui_disp).upload_tft();
+
   # Script to send a notification
   - id: send_notification
     parameters:

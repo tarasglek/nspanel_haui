@@ -20,4 +20,4 @@ button:
     icon: mdi:file-sync
     entity_category: config
     on_press:
-      - lambda: id(haui_disp).upload_tft();
+      - script.execute: upload_tft_safe;
