@@ -29,6 +29,7 @@ SERVICE_CLOSE_PANEL = "close_panel"
 SERVICE_WAKEUP = "wakeup"
 SERVICE_SLEEP = "sleep"
 SERVICE_SEND_NOTIFICATION = "send_notification"
+SERVICE_DISMISS_NOTIFICATION = "dismiss_notification"
 SERVICE_RESET_LAST_INTERACTION = "reset_last_interaction"
 
 # DOMAIN is defined in __init__.py; we keep a local copy to avoid
@@ -68,6 +69,12 @@ SERVICE_SEND_NOTIFICATION_SCHEMA = vol.Schema(
         vol.Optional("persistent", default=False): cv.boolean,
         vol.Optional("type", default="info"): vol.In(["info", "warning", "critical"]),
         vol.Optional("force_show", default=False): cv.boolean,
+    }
+)
+SERVICE_DISMISS_NOTIFICATION_SCHEMA = vol.Schema(
+    {
+        vol.Optional("device", default=None): vol.Any(str, None),
+        vol.Required("title"): cv.string,
     }
 )
 SERVICE_RESET_LAST_INTERACTION_SCHEMA = vol.Schema(
@@ -247,6 +254,22 @@ async def _handle_send_notification(hass: HomeAssistant, call: ServiceCall) -> N
     await _device_action(hass, call, action=_notify_action)
 
 
+async def _handle_dismiss_notification(hass: HomeAssistant, call: ServiceCall) -> None:
+    title: str = call.data["title"]
+
+    def _dismiss_action(app: Any, dev_name: str) -> None:
+        notifications = app.controller.get("notification")
+        if notifications is None:
+            return
+        matches = [n for n in notifications.get_notifications() if n[0] == title]
+        if not matches:
+            return
+        for notification in matches:
+            notifications.remove_notification(notification)
+
+    await _device_action(hass, call, action=_dismiss_action)
+
+
 async def _handle_reset_last_interaction(hass: HomeAssistant, call: ServiceCall) -> None:
     offset: int = call.data.get("offset", 0)
 
@@ -293,6 +316,12 @@ def async_register_services(hass: HomeAssistant) -> None:
         SERVICE_SEND_NOTIFICATION,
         partial(_handle_send_notification, hass),
         schema=SERVICE_SEND_NOTIFICATION_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_DISMISS_NOTIFICATION,
+        partial(_handle_dismiss_notification, hass),
+        schema=SERVICE_DISMISS_NOTIFICATION_SCHEMA,
     )
     hass.services.async_register(
         DOMAIN,

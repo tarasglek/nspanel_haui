@@ -9,7 +9,8 @@ import time
 
 from nspanel_haui.haui.abstract.haui_event import HAUIEvent
 from nspanel_haui.haui.controller.navigation import HAUINavigationController
-from nspanel_haui.haui.mapping.const import ESPEvent
+from nspanel_haui.haui.controller.notification import HAUINotificationController
+from nspanel_haui.haui.mapping.const import ESPEvent, SysPanelKey
 
 
 class DummyPanel:
@@ -301,12 +302,12 @@ import nspanel_haui.haui.controller.navigation as nav_module  # noqa: E402
 class OpenPanel:
     """Fake panel with enough surface for _open_panel_impl."""
 
-    def __init__(self, panel_id, panel_type="grid", nav_panel=True):
+    def __init__(self, panel_id, panel_type="grid", nav_panel=True, close_timeout=0, key="test"):
         self.id = panel_id
         self._type = panel_type
         self._nav = nav_panel
         self._state = {}
-        self._cfg = {"unlock_code": "", "close_timeout": 0, "key": "test"}
+        self._cfg = {"unlock_code": "", "close_timeout": close_timeout, "key": key}
 
     def get_type(self):
         return self._type
@@ -315,7 +316,7 @@ class OpenPanel:
         return self._nav
 
     def apply_kwargs(self, kwargs):
-        pass
+        self._cfg.update(kwargs)
 
     def get(self, key, default=None):
         return self._cfg.get(key, default)
@@ -347,11 +348,11 @@ class OpenPage:
 
 
 class FakeDeviceConfig:
-    def __init__(self, panel):
-        self._panel = panel
+    def __init__(self, panels):
+        self._panels = panels if isinstance(panels, dict) else {"p1": panels}
 
     def get_panel(self, panel_id):
-        return self._panel
+        return self._panels[panel_id]
 
 
 def _make_nav_for_open(panel, page_id):
@@ -407,6 +408,157 @@ def test_open_panel_different_page_waits_for_event():
 
     assert nav.calls["display_panel"] == []
     assert nav._page_timeout is not None  # run_in returns "handle"
+
+
+def test_forced_popup_stacks_and_restores_an_existing_popup():
+    base = OpenPanel("base")
+    popup = OpenPanel("popup", panel_type="notify", nav_panel=False)
+    nav = _make_nav_for_open({"base": base, "popup": popup}, page_id=5)
+
+    with (
+        patch.object(nav_module, "get_page_id_for_panel", return_value=5),
+        patch.object(nav_module, "get_page_class_for_panel", return_value=OpenPage),
+    ):
+        nav.open_panel("base")
+        nav.open_panel("popup", notification="Doorbell")
+        nav.open_panel("popup", preserve_current=True, notification="Deck heating paused")
+        assert popup.get("notification") == "Deck heating paused"
+
+        nav.close_panel()
+
+    assert nav.panel is popup
+    assert nav.panel_kwargs == {"notification": "Doorbell"}
+    assert popup.get("notification") == "Doorbell"
+
+
+def _notification_navigation():
+    base = OpenPanel("base")
+    popup = OpenPanel("popup", panel_type="notify", nav_panel=False, key="popup_notify")
+    nav = _make_nav_for_open(
+        {"base": base, "popup": popup, SysPanelKey.POPUP_NOTIFY: popup}, page_id=5
+    )
+    with (
+        patch.object(nav_module, "get_page_id_for_panel", return_value=5),
+        patch.object(nav_module, "get_page_class_for_panel", return_value=OpenPage),
+    ):
+        nav.open_panel("base")
+        notifications = HAUINotificationController(nav.app, {})
+        nav.app.callback_event = lambda _event: None
+        nav.app.controller["notification"] = notifications
+        deck = notifications.add_notification(
+            "Deck heating paused", "Deck door open", force_show=True
+        )
+        notifications.add_notification("Doorbell", "Someone is at the door", force_show=True)
+    return nav, notifications, deck, popup
+
+
+def test_dismissing_hidden_forced_popup_does_not_restore_it():
+    nav, notifications, deck, popup = _notification_navigation()
+    assert nav.panel_kwargs["title"] == "Doorbell"
+
+    notifications.remove_notification(deck)
+    nav.close_panel()
+
+    assert nav.panel.id == "base"
+    assert nav.panel_kwargs == {}
+
+
+def test_removing_visible_forced_popup_closes_it():
+    nav, notifications, deck, _popup = _notification_navigation()
+    doorbell = notifications.get_notifications()[1]
+    notifications.remove_notification(doorbell)
+
+    assert nav.panel_kwargs["title"] == "Deck heating paused"
+    notifications.remove_notification(deck)
+
+    assert nav.panel.id == "base"
+    assert nav.panel_kwargs == {}
+
+
+def test_expiring_hidden_forced_popup_does_not_restore_it():
+    nav, notifications, deck, popup = _notification_navigation()
+
+    notifications._expire_notification(id(deck))
+    nav.close_panel()
+
+    assert nav.panel.id == "base"
+    assert nav.panel_kwargs == {}
+
+
+def test_expiring_same_title_notification_keeps_later_popup_visible():
+    base = OpenPanel("base")
+    popup = OpenPanel("popup", panel_type="notify", nav_panel=False, key="popup_notify")
+    nav = _make_nav_for_open(
+        {"base": base, "popup": popup, SysPanelKey.POPUP_NOTIFY: popup}, page_id=5
+    )
+    with (
+        patch.object(nav_module, "get_page_id_for_panel", return_value=5),
+        patch.object(nav_module, "get_page_class_for_panel", return_value=OpenPage),
+    ):
+        nav.open_panel("base")
+        notifications = HAUINotificationController(nav.app, {})
+        nav.app.callback_event = lambda _event: None
+        nav.app.controller["notification"] = notifications
+        earlier = notifications.add_notification(
+            "Doorbell", "First visitor", timeout=10, force_show=True
+        )
+        later = notifications.add_notification(
+            "Doorbell", "Second visitor", force_show=True
+        )
+
+        notifications._expire_notification(id(earlier))
+
+    assert later in notifications.get_notifications()
+    assert nav.panel_kwargs["title"] == "Doorbell"
+    assert nav.panel_kwargs["notification"] == "Second visitor"
+
+
+def test_queue_eviction_removes_only_evicted_popup_snapshot():
+    nav, notifications, _deck, popup = _notification_navigation()
+    notifications.MAX_QUEUE_SIZE = 2
+    oldest, current = notifications.get_notifications()
+    notifications.add_notification("Third", "Queued")
+
+    assert oldest not in notifications.get_notifications()
+    assert current in notifications.get_notifications()
+    assert nav.panel is popup
+    assert nav.panel_kwargs["title"] == "Doorbell"
+    assert all(
+        not (panel.get("key") == "popup_notify" and kwargs.get("title") == oldest[0])
+        for panel, kwargs in nav._stack
+    )
+
+
+def test_clear_notifications_removes_all_visible_and_stacked_popups():
+    nav, notifications, _deck, _popup = _notification_navigation()
+
+    notifications.clear_notifications()
+
+    assert notifications.get_notifications() == []
+    assert nav.panel.id == "base"
+    assert nav.panel_kwargs == {}
+    assert not any(panel.get("key") == "popup_notify" for panel, _ in nav._stack)
+
+
+def test_indefinite_forced_popup_cancels_existing_close_timer():
+    base = OpenPanel("base")
+    popup = OpenPanel("popup", panel_type="notify", nav_panel=False, close_timeout=15)
+    nav = _make_nav_for_open({"base": base, "popup": popup}, page_id=5)
+
+    with (
+        patch.object(nav_module, "get_page_id_for_panel", return_value=5),
+        patch.object(nav_module, "get_page_class_for_panel", return_value=OpenPage),
+    ):
+        nav.open_panel("base")
+        nav.open_panel("popup", notification="Timed popup")
+        assert nav._close_timeout is not None
+        old_timeout = nav._close_timeout
+
+        popup._cfg["close_timeout"] = 0
+        nav.open_panel("popup", preserve_current=True, notification="Indefinite alert")
+
+    assert old_timeout in nav.app.cancel_calls
+    assert nav._close_timeout is None
 
 
 def test_page_timeout_callback_forces_goto_and_displays():

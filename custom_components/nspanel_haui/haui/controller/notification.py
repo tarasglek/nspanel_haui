@@ -95,6 +95,7 @@ class HAUINotificationController(HAUIBase):
         if len(self._notifications) >= self.MAX_QUEUE_SIZE:
             oldest = self._notifications.pop(0)
             self._cancel_expiry(oldest)
+            self._remove_notification_popups([oldest])
             self.log(f"Notification queue full, dropping oldest: {oldest[0]!r}")
 
         notification = (title, message, icon, timeout, persistent, notif_type, force_show)
@@ -108,22 +109,20 @@ class HAUINotificationController(HAUIBase):
             handle = self.app.run_in(lambda _data: self._expire_notification(notif_id), timeout)
             self._expiry_timers[notif_id] = handle
 
-        # Force-show: open the notification panel immediately
+        # Force-show opens this notification's popup even when other
+        # notifications are already queued.
         if force_show:
             navigation = self.app.controller.get("navigation")
             if navigation:
-                count = len(self._notifications)
-                if count == 1:
-                    navigation.open_panel(
-                        SysPanelKey.POPUP_NOTIFY,
-                        icon=icon,
-                        title=title,
-                        notification=message,
-                        close_on_button=True,
-                        close_timeout=timeout if timeout > 0 else 0,
-                    )
-                else:
-                    self.open_notification_list()
+                navigation.open_panel(
+                    SysPanelKey.POPUP_NOTIFY,
+                    icon=icon,
+                    title=title,
+                    notification=message,
+                    close_on_button=True,
+                    close_timeout=timeout if timeout > 0 else 0,
+                    preserve_current=True,
+                )
 
         return notification
 
@@ -131,17 +130,27 @@ class HAUINotificationController(HAUIBase):
         if notification in self._notifications:
             self._cancel_expiry(notification)
             self._notifications.remove(notification)
+            self._remove_notification_popups([notification])
             event = HAUIEvent(NotifEvent.NOTIF_REMOVE, value=notification)
             self.app.callback_event(event)
             return True
         return False
 
+    def _remove_notification_popups(self, notifications: list[tuple]) -> None:
+        navigation = self.app.controller.get("navigation")
+        if navigation is not None:
+            navigation.remove_notification_popups(notifications)
+
     def clear_notifications(self) -> None:
+        # Clear queue state before navigation cleanup so a restored popup cannot
+        # be mistaken for a still-active notification during this batch removal.
+        notifications = self._notifications
+        self._notifications = []
         # Cancel all expiry timers
         for handle in self._expiry_timers.values():
             self.app.cancel_timer(handle)
         self._expiry_timers.clear()
-        self._notifications = []
+        self._remove_notification_popups(notifications)
         event = HAUIEvent(NotifEvent.NOTIF_CLEAR, value=None)
         self.app.callback_event(event)
 
@@ -172,6 +181,7 @@ class HAUINotificationController(HAUIBase):
         for i, n in enumerate(self._notifications):
             if id(n) == notification_id:
                 self._notifications.pop(i)
+                self._remove_notification_popups([n])
                 event = HAUIEvent(NotifEvent.NOTIF_REMOVE, value=n)
                 self.app.callback_event(event)
                 self.log(f"Notification expired: {n[0]!r}")
