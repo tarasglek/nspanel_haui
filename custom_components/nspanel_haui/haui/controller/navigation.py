@@ -316,6 +316,7 @@ class HAUINavigationController(HAUIBase):
 
     def _open_panel_impl(self, panel_id: UUID | str, **kwargs: Any) -> None:
         self.log(f"Opening panel: {panel_id}-{kwargs}")
+        preserve_current = kwargs.pop("preserve_current", False)
 
         # lock current panel before setting new
         # only if the panel had a locked state
@@ -372,10 +373,13 @@ class HAUINavigationController(HAUIBase):
                 self._stack = []
         # new panel is not a navigatable panel
         else:
-            # add to the navigation stack
+            # An explicit popup overlay can revisit the same panel while keeping
+            # its current contents available for close_panel() to restore.
+            if preserve_current and self.panel is not None and self.panel.id == panel.id:
+                self._stack.append((self.panel, self.panel_kwargs.copy()))
             # Guard against duplicates: don't push if this panel is already at
             # the top of the stack (e.g. reconnect retry, page-timeout retry).
-            if not self._stack or self._stack[-1][0].id != panel.id:
+            elif not self._stack or self._stack[-1][0].id != panel.id:
                 self._stack.append((panel, kwargs))
 
         # set new panel as current panel
@@ -433,9 +437,10 @@ class HAUINavigationController(HAUIBase):
 
         # check for close timeout in panel config (contains also kwargs)
         timeout = panel.get("close_timeout", 0)
+        if self._close_timeout is not None:
+            self.app.cancel_timer(self._close_timeout)
+            self._close_timeout = None
         if timeout > 0:
-            if self._close_timeout is not None:
-                self.app.cancel_timer(self._close_timeout)
             self._close_timeout = self.app.run_in(self._close_timeout_callback, timeout)
 
     def _page_timeout_callback(self, _kwargs: dict[str, Any]) -> None:

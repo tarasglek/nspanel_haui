@@ -120,6 +120,7 @@ class HAUINotificationController(HAUIBase):
                     notification=message,
                     close_on_button=True,
                     close_timeout=timeout if timeout > 0 else 0,
+                    preserve_current=True,
                 )
 
         return notification

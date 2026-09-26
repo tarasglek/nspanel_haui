@@ -301,12 +301,12 @@ import nspanel_haui.haui.controller.navigation as nav_module  # noqa: E402
 class OpenPanel:
     """Fake panel with enough surface for _open_panel_impl."""
 
-    def __init__(self, panel_id, panel_type="grid", nav_panel=True):
+    def __init__(self, panel_id, panel_type="grid", nav_panel=True, close_timeout=0):
         self.id = panel_id
         self._type = panel_type
         self._nav = nav_panel
         self._state = {}
-        self._cfg = {"unlock_code": "", "close_timeout": 0, "key": "test"}
+        self._cfg = {"unlock_code": "", "close_timeout": close_timeout, "key": "test"}
 
     def get_type(self):
         return self._type
@@ -315,7 +315,7 @@ class OpenPanel:
         return self._nav
 
     def apply_kwargs(self, kwargs):
-        pass
+        self._cfg.update(kwargs)
 
     def get(self, key, default=None):
         return self._cfg.get(key, default)
@@ -347,11 +347,11 @@ class OpenPage:
 
 
 class FakeDeviceConfig:
-    def __init__(self, panel):
-        self._panel = panel
+    def __init__(self, panels):
+        self._panels = panels if isinstance(panels, dict) else {"p1": panels}
 
     def get_panel(self, panel_id):
-        return self._panel
+        return self._panels[panel_id]
 
 
 def _make_nav_for_open(panel, page_id):
@@ -407,6 +407,48 @@ def test_open_panel_different_page_waits_for_event():
 
     assert nav.calls["display_panel"] == []
     assert nav._page_timeout is not None  # run_in returns "handle"
+
+
+def test_forced_popup_stacks_and_restores_an_existing_popup():
+    base = OpenPanel("base")
+    popup = OpenPanel("popup", panel_type="notify", nav_panel=False)
+    nav = _make_nav_for_open({"base": base, "popup": popup}, page_id=5)
+
+    with (
+        patch.object(nav_module, "get_page_id_for_panel", return_value=5),
+        patch.object(nav_module, "get_page_class_for_panel", return_value=OpenPage),
+    ):
+        nav.open_panel("base")
+        nav.open_panel("popup", notification="Doorbell")
+        nav.open_panel("popup", preserve_current=True, notification="Deck heating paused")
+        assert popup.get("notification") == "Deck heating paused"
+
+        nav.close_panel()
+
+    assert nav.panel is popup
+    assert nav.panel_kwargs == {"notification": "Doorbell"}
+    assert popup.get("notification") == "Doorbell"
+
+
+def test_indefinite_forced_popup_cancels_existing_close_timer():
+    base = OpenPanel("base")
+    popup = OpenPanel("popup", panel_type="notify", nav_panel=False, close_timeout=15)
+    nav = _make_nav_for_open({"base": base, "popup": popup}, page_id=5)
+
+    with (
+        patch.object(nav_module, "get_page_id_for_panel", return_value=5),
+        patch.object(nav_module, "get_page_class_for_panel", return_value=OpenPage),
+    ):
+        nav.open_panel("base")
+        nav.open_panel("popup", notification="Timed popup")
+        assert nav._close_timeout is not None
+        old_timeout = nav._close_timeout
+
+        popup._cfg["close_timeout"] = 0
+        nav.open_panel("popup", preserve_current=True, notification="Indefinite alert")
+
+    assert old_timeout in nav.app.cancel_calls
+    assert nav._close_timeout is None
 
 
 def test_page_timeout_callback_forces_goto_and_displays():

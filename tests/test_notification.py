@@ -135,6 +135,7 @@ def test_notification_controller_force_shows_targeted_notification_with_existing
                 "notification": "Deck door open - floor heating off",
                 "close_on_button": True,
                 "close_timeout": 0,
+                "preserve_current": True,
             },
         )
     ]
@@ -186,6 +187,7 @@ def test_force_show_displays_its_popup_when_other_notifications_are_queued(dummy
                 "notification": "Door open",
                 "close_on_button": True,
                 "close_timeout": 0,
+                "preserve_current": True,
             },
         )
     ]
