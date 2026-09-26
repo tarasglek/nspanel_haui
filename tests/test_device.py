@@ -56,6 +56,9 @@ class DummyNavigation:
         if self._home_panel is not None:
             self.open_panel(self._home_panel.id, autostart=autostart)
 
+    def preserve_forced_notification_on_wake(self):
+        return False
+
 
 class DummyESPHomeProxy:
     def __init__(self):

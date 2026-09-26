@@ -542,6 +542,9 @@ class HAUIDevice(HAUIBase):
         navigation = self.app.controller["navigation"]
         if not navigation.panel:
             return
+        if navigation.preserve_forced_notification_on_wake():
+            self.woke_up = False
+            return
 
         on_wakeup_panel = (
             self.get("wakeup_panel")

@@ -332,6 +332,29 @@ async def test_set_brightness(mock_hass, mock_nav, mock_esphome_ctrl, mock_notif
 
 
 @pytest.mark.asyncio
+async def test_force_show_wakes_display_before_showing_notification(
+    mock_hass, mock_nav, mock_esphome_ctrl, mock_notification_ctrl
+):
+    app = _make_app(mock_nav, mock_esphome_ctrl, mock_notification_ctrl)
+    mock_hass.data[DOMAIN] = {"entry_1": {"dev": app}}
+    calls = []
+    mock_esphome_ctrl.esphome.publish.side_effect = lambda *args: calls.append(("wake", args))
+    mock_notification_ctrl.send_notification.side_effect = lambda **kwargs: calls.append(
+        ("notification", kwargs)
+    )
+
+    from nspanel_haui.services import _handle_send_notification
+
+    call = MagicMock()
+    call.data = {"title": "Deck heating paused", "force_show": True, "device": "dev_1"}
+
+    await _handle_send_notification(mock_hass, call)
+
+    assert calls[0] == ("wake", ("reset_last_interaction", "0"))
+    assert calls[1][0] == "notification"
+
+
+@pytest.mark.asyncio
 async def test_send_notification_persistent_with_timeout(
     mock_hass, mock_nav, mock_esphome_ctrl, mock_notification_ctrl
 ):
@@ -362,6 +385,7 @@ async def test_send_notification_persistent_with_timeout(
         notif_type="info",
         force_show=False,
     )
+    mock_esphome_ctrl.esphome.publish.assert_not_called()
 
 
 @pytest.mark.asyncio

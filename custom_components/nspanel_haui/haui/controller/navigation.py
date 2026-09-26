@@ -571,7 +571,7 @@ class HAUINavigationController(HAUIBase):
             self.open_home_panel()
 
     def remove_notification_popups(self, notifications: list[tuple]) -> None:
-        """Remove exact notification popups and snapshots from navigation."""
+        """Remove exact notification popups from live and saved navigation."""
         identities = {(notification[0], notification[1]) for notification in notifications}
         if not identities:
             return
@@ -581,13 +581,34 @@ class HAUINavigationController(HAUIBase):
                 kwargs.get("title"), kwargs.get("notification")
             ) in identities
 
+        while self.panel is not None and is_removed_popup(self.panel, self.panel_kwargs):
+            current = self.panel
+            current_kwargs = self.panel_kwargs.copy()
+            self.close_panel()
+            if self.panel is current and self.panel_kwargs == current_kwargs:
+                break
+
         self._stack = [
             (panel, kwargs)
             for panel, kwargs in self._stack
             if not is_removed_popup(panel, kwargs)
         ]
-        if self.panel is not None and is_removed_popup(self.panel, self.panel_kwargs):
-            self.close_panel()
+
+        if self._snapshot is not None:
+            panel, panel_kwargs, current_nav, current_nav_kwargs, stack = self._snapshot
+            stack = [
+                (saved_panel, saved_kwargs)
+                for saved_panel, saved_kwargs in stack
+                if not is_removed_popup(saved_panel, saved_kwargs)
+            ]
+            if panel is not None and is_removed_popup(panel, panel_kwargs):
+                if stack:
+                    panel, panel_kwargs = stack.pop()
+                elif current_nav is not None:
+                    panel, panel_kwargs = current_nav, current_nav_kwargs
+                else:
+                    panel, panel_kwargs = self._home_panel, {}
+            self._snapshot = (panel, panel_kwargs, current_nav, current_nav_kwargs, stack)
 
     def close_panel(self) -> None:
         """Closes the current panel."""
@@ -710,6 +731,47 @@ class HAUINavigationController(HAUIBase):
         """
         self._sleep_panel_active = False
         self.app.device.sleeping = False
+
+    def preserve_forced_notification_on_wake(self) -> bool:
+        """Keep a visible forced notification above its pre-sleep panel."""
+        popup = self.panel
+        if popup is None or popup.get("key") != "popup_notify":
+            return False
+
+        title = self.panel_kwargs.get("title")
+        message = self.panel_kwargs.get("notification")
+        notifications = self.app.controller.get("notification")
+        if notifications is None or not any(
+            len(item) > 6
+            and item[0] == title
+            and item[1] == message
+            and item[6]
+            for item in notifications.get_notifications()
+        ):
+            return False
+
+        if self._snapshot is not None:
+            snapshot_panel, snapshot_kwargs, current_nav, current_nav_kwargs, stack = self._snapshot
+            stack = list(stack)
+            if (
+                snapshot_panel is not None
+                and (current_nav is None or snapshot_panel.id != current_nav.id)
+                and (
+                    not stack
+                    or stack[-1][0].id != snapshot_panel.id
+                    or stack[-1][1] != snapshot_kwargs
+                )
+            ):
+                stack.append((snapshot_panel, snapshot_kwargs))
+            self._current_nav = current_nav
+            self._current_nav_kwargs = current_nav_kwargs
+            self._stack = [*stack, (popup, self.panel_kwargs.copy())]
+            self.unset_snapshot()
+
+        self.mark_awake()
+        if hasattr(self.app.device, "woke_up"):
+            self.app.device.woke_up = False
+        return True
 
     def open_wakeup_panel(self, autostart: bool = False) -> None:
         """Opens the wakeup panel.
@@ -942,6 +1004,8 @@ class HAUINavigationController(HAUIBase):
         # run for this event.
         if not device.connected:
             return
+        if event.value != "off" and self.preserve_forced_notification_on_wake():
+            return
         # Woke from off with a wakeup panel configured -> show it. The
         # sleep-screen *exit* decision is made on the touch itself
         # (Device.check_wakeup), never here, so the order of the touch and
@@ -955,6 +1019,8 @@ class HAUINavigationController(HAUIBase):
 
     def _handle_wakeup_event(self, event: HAUIEvent) -> None:
         """esphome.wakeup (non-hub / post-hardware-sleep wake)."""
+        if self.preserve_forced_notification_on_wake():
+            return
         if self._wakeup_panel is not None:
             self.log(f"Wakeup panel: {self._wakeup_panel.id}")
             self.open_wakeup_panel()

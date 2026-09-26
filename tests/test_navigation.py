@@ -6,10 +6,12 @@ high-level navigation methods rather than exercising the full display stack.
 """
 
 import time
+from types import SimpleNamespace
 
 from nspanel_haui.haui.abstract.haui_event import HAUIEvent
 from nspanel_haui.haui.controller.navigation import HAUINavigationController
 from nspanel_haui.haui.controller.notification import HAUINotificationController
+from nspanel_haui.haui.device import HAUIDevice
 from nspanel_haui.haui.mapping.const import ESPEvent, SysPanelKey
 
 
@@ -450,6 +452,150 @@ def _notification_navigation():
         )
         notifications.add_notification("Doorbell", "Someone is at the door", force_show=True)
     return nav, notifications, deck, popup
+
+
+def _sleeping_forced_notification(
+    *,
+    previous_notification=False,
+    same_panel_previous=False,
+    notification_before_sleep=False,
+    timeout=0,
+):
+    base = OpenPanel("base")
+    sleep = OpenPanel("sleep", nav_panel=False, key="sleep")
+    popup = OpenPanel("popup", panel_type="notify", nav_panel=False, key="popup_notify")
+    nav = _make_nav_for_open(
+        {"base": base, "sleep": sleep, "popup": popup, SysPanelKey.POPUP_NOTIFY: popup},
+        page_id=5,
+    )
+
+    with (
+        patch.object(nav_module, "get_page_id_for_panel", return_value=5),
+        patch.object(nav_module, "get_page_class_for_panel", return_value=OpenPage),
+    ):
+        nav.open_panel("base")
+        notifications = HAUINotificationController(nav.app, {})
+        nav.app.callback_event = lambda _event: None
+        nav.app.controller["notification"] = notifications
+        if previous_notification:
+            notifications.add_notification("Earlier", "Queued", force_show=True)
+        if same_panel_previous:
+            notifications.add_notification("Doorbell", "First", force_show=True)
+            notifications.add_notification("Doorbell", "Second", force_show=True)
+        nav._sleep_panel = sleep
+        nav.app.device.woke_up = False
+        if notification_before_sleep:
+            notification = notifications.add_notification(
+                "Deck heating paused", "Door open", timeout=timeout, force_show=True
+            )
+        nav.open_sleep_panel()
+        if not notification_before_sleep:
+            notification = notifications.add_notification(
+                "Deck heating paused", "Door open", timeout=timeout, force_show=True
+            )
+
+    nav.reload_panel = lambda: None
+    device = HAUIDevice(
+        nav.app, {"name": "nspanel_haui", "wakeup_panel": "", "debug_level": 0}
+    )
+    device.sleeping = True
+    device.device_info["display_state"] = "off"
+    nav.app.device = device
+    return nav, notifications, notification, popup, base, device
+
+
+def test_forced_notification_survives_waking_touch_and_can_be_dismissed():
+    nav, notifications, notification, popup, base, device = _sleeping_forced_notification()
+
+    device.check_wakeup()
+
+    assert nav.panel is popup
+    assert nav.panel_kwargs["title"] == "Deck heating paused"
+    assert nav._snapshot is None
+    notifications.remove_notification(notification)
+    assert nav.panel is base
+
+
+def test_wake_dismissal_restores_an_earlier_forced_popup():
+    nav, notifications, notification, popup, _base, device = _sleeping_forced_notification(
+        previous_notification=True
+    )
+    device.check_wakeup()
+
+    notifications.remove_notification(notification)
+
+    assert nav.panel is popup
+    assert nav.panel_kwargs["title"] == "Earlier"
+    assert [item[0] for item in notifications.get_notifications()] == ["Earlier"]
+
+
+def test_wake_dismissal_restores_same_panel_popups_in_queue_order():
+    nav, notifications, notification, popup, _base, device = _sleeping_forced_notification(
+        same_panel_previous=True
+    )
+    device.check_wakeup()
+
+    notifications.remove_notification(notification)
+    assert nav.panel is popup
+    assert nav.panel_kwargs["notification"] == "Second"
+
+    second = next(item for item in notifications.get_notifications() if item[1] == "Second")
+    notifications.remove_notification(second)
+
+    assert nav.panel is popup
+    assert nav.panel_kwargs["notification"] == "First"
+    assert [item[1] for item in notifications.get_notifications()] == ["First"]
+
+
+def test_expiring_sleeping_notification_does_not_restore_from_snapshot():
+    nav, notifications, notification, _popup, base, device = _sleeping_forced_notification(
+        notification_before_sleep=True, timeout=30
+    )
+    notifications._expire_notification(id(notification))
+
+    device.check_wakeup()
+
+    assert nav.panel is base
+    assert notifications.get_notifications() == []
+
+
+def test_dismissing_sleeping_notification_does_not_restore_from_snapshot():
+    nav, notifications, notification, _popup, base, device = _sleeping_forced_notification(
+        notification_before_sleep=True
+    )
+    notifications.remove_notification(notification)
+
+    device.check_wakeup()
+
+    assert nav.panel is base
+    assert notifications.get_notifications() == []
+
+
+def test_forced_notification_survives_display_unblank_event():
+    nav, _notifications, _notification, popup, _base, device = _sleeping_forced_notification()
+    nav._sleep_panel_active = False
+    device.sleeping = True
+    device.device_info["display_state"] = "off"
+    nav.app.controller["connection"] = SimpleNamespace(is_connected=True)
+    nav.page = None
+
+    nav.process_event(HAUIEvent(ESPEvent.DISPLAY_STATE, "on"))
+
+    assert nav.panel is popup
+    assert nav.panel_kwargs["title"] == "Deck heating paused"
+
+
+def test_forced_notification_survives_wakeup_event_snapshot_restore():
+    nav, _notifications, _notification, popup, _base, device = _sleeping_forced_notification()
+    nav._sleep_panel_active = False
+    device.sleeping = False
+    nav.page = None
+
+    nav.process_event(HAUIEvent(ESPEvent.WAKEUP, ""))
+
+    assert nav.panel is popup
+    assert nav.panel_kwargs["title"] == "Deck heating paused"
+    assert nav._snapshot is None
 
 
 def test_dismissing_hidden_forced_popup_does_not_restore_it():

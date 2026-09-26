@@ -251,7 +251,12 @@ async def _handle_send_notification(hass: HomeAssistant, call: ServiceCall) -> N
             force_show=force_show,
         )
 
-    await _device_action(hass, call, action=_notify_action)
+    await _device_action(
+        hass,
+        call,
+        action=_notify_action,
+        wake_first=force_show,
+    )
 
 
 async def _handle_dismiss_notification(hass: HomeAssistant, call: ServiceCall) -> None:

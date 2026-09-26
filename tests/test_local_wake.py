@@ -60,6 +60,9 @@ class DummyNavigation:
     def exit_sleep_to_prev_or_home(self, config: dict) -> None:
         self.exit_calls.append(config)
 
+    def preserve_forced_notification_on_wake(self) -> bool:
+        return False
+
 
 class DummyApp:
     def __init__(self) -> None:
