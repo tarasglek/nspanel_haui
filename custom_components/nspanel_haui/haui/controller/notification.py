@@ -108,22 +108,19 @@ class HAUINotificationController(HAUIBase):
             handle = self.app.run_in(lambda _data: self._expire_notification(notif_id), timeout)
             self._expiry_timers[notif_id] = handle
 
-        # Force-show: open the notification panel immediately
+        # Force-show opens this notification's popup even when other
+        # notifications are already queued.
         if force_show:
             navigation = self.app.controller.get("navigation")
             if navigation:
-                count = len(self._notifications)
-                if count == 1:
-                    navigation.open_panel(
-                        SysPanelKey.POPUP_NOTIFY,
-                        icon=icon,
-                        title=title,
-                        notification=message,
-                        close_on_button=True,
-                        close_timeout=timeout if timeout > 0 else 0,
-                    )
-                else:
-                    self.open_notification_list()
+                navigation.open_panel(
+                    SysPanelKey.POPUP_NOTIFY,
+                    icon=icon,
+                    title=title,
+                    notification=message,
+                    close_on_button=True,
+                    close_timeout=timeout if timeout > 0 else 0,
+                )
 
         return notification
 

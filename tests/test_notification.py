@@ -157,6 +157,40 @@ def test_notification_controller_send_esphome(dummy_app, dummy_esphome):
     assert event.value == expected_value
 
 
+def test_force_show_displays_its_popup_when_other_notifications_are_queued(dummy_app):
+    """A force-show notification opens its own popup, not the selection list."""
+    from nspanel_haui.haui.mapping.const import SysPanelKey
+
+    class Navigation:
+        def __init__(self):
+            self.opened = []
+
+        def open_panel(self, panel, **kwargs):
+            self.opened.append((panel, kwargs))
+
+    navigation = Navigation()
+    dummy_app.controller["navigation"] = navigation
+    controller = HAUINotificationController(dummy_app, {})
+    controller.add_notification("Earlier", "Queued")
+
+    controller.add_notification(
+        "Deck heating paused", "Door open", "mdi:door-open", force_show=True
+    )
+
+    assert navigation.opened == [
+        (
+            SysPanelKey.POPUP_NOTIFY,
+            {
+                "icon": "mdi:door-open",
+                "title": "Deck heating paused",
+                "notification": "Door open",
+                "close_on_button": True,
+                "close_timeout": 0,
+            },
+        )
+    ]
+
+
 def test_device_play_sound_on_notification_event(dummy_app):
     """Test that a notification event triggers a sound when enabled in config."""
     config = {"sound_on_notification": True}
