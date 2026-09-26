@@ -99,7 +99,11 @@ def _make_app(
     """Create a minimal NSPanelHAUI-like mock."""
     app = MagicMock()
     app._ha_device_id = ha_device_id
-    app.controller = {"navigation": mock_nav, "esphome": mock_esphome_ctrl}
+    app.controller = {
+        "navigation": mock_nav,
+        "esphome": mock_esphome_ctrl,
+        "notification": MagicMock(),
+    }
     app.name = name
     return app
 
@@ -287,8 +291,10 @@ async def test_sleep(mock_hass, mock_nav, mock_esphome_ctrl):
 
 
 @pytest.mark.asyncio
-async def test_set_brightness(mock_hass, mock_nav, mock_esphome_ctrl):
-    """set_brightness publishes ESPAction.SET_BRIGHTNESS with intensity."""
+async def test_send_notification_dispatches_to_controller_with_force_show(
+    mock_hass, mock_nav, mock_esphome_ctrl
+):
+    """Notification service preserves force_show via the local controller."""
     app = _make_app(mock_nav, mock_esphome_ctrl)
     app = _make_app(mock_nav, mock_esphome_ctrl)
     mock_hass.data[DOMAIN] = {"entry_1": {"dev": app}}
@@ -302,21 +308,16 @@ async def test_set_brightness(mock_hass, mock_nav, mock_esphome_ctrl):
         "icon": "mdi:bell",
         "timeout": 0,
         "persistent": False,
-        "device_id": "dev_1",
+        "device": "dev_1",
+        "force_show": True,
     }
 
     await _handle_send_notification(mock_hass, call)
 
-    mock_esphome_ctrl.esphome.publish.assert_called_once_with(
-        NotificationAction.SEND_NOTIFICATION,
-        {
-            "title": "Doorbell",
-            "message": "At the door",
-            "icon": "mdi:bell",
-            "notif_type": "info",
-            "force_show": False,
-        },
+    app.controller["notification"].send_notification.assert_called_once_with(
+        "Doorbell", "At the door", "mdi:bell", 0, False, "info", True
     )
+    mock_esphome_ctrl.esphome.publish.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -334,22 +335,15 @@ async def test_send_notification_persistent_with_timeout(mock_hass, mock_nav, mo
         "icon": "",
         "timeout": 30,
         "persistent": True,
-        "device_id": "dev_1",
+        "device": "dev_1",
     }
 
     await _handle_send_notification(mock_hass, call)
 
-    mock_esphome_ctrl.esphome.publish.assert_called_once_with(
-        NotificationAction.SEND_NOTIFICATION_PERSISTENT_WITH_TIMEOUT,
-        {
-            "title": "Alarm",
-            "message": "",
-            "icon": "",
-            "timeout": 30,
-            "notif_type": "info",
-            "force_show": False,
-        },
+    app.controller["notification"].send_notification.assert_called_once_with(
+        "Alarm", "", "", 30, True, "info", False
     )
+    mock_esphome_ctrl.esphome.publish.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -395,6 +389,29 @@ async def test_dismiss_notification_does_not_close_other_popup(
     await _handle_dismiss_notification(mock_hass, call)
 
     notification.remove_notification.assert_called_once()
+    mock_nav.close_panel.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_dismiss_notification_does_not_close_selection_list(
+    mock_hass, mock_nav, mock_esphome_ctrl
+):
+    from nspanel_haui.services import _handle_dismiss_notification
+
+    app = _make_app(mock_nav, mock_esphome_ctrl)
+    notification = MagicMock()
+    wanted = ("Deck heating paused", "Door open", "", 0, False, "info", True)
+    notification.get_notifications.return_value = [wanted]
+    app.controller["notification"] = notification
+    mock_hass.data[DOMAIN] = {"entry_1": {"dev": app}}
+    mock_nav.panel_kwargs = {}
+    mock_nav.get_current_panel.return_value.get.return_value = "popup_select"
+    call = MagicMock()
+    call.data = {"title": "Deck heating paused", "device": "dev_1"}
+
+    await _handle_dismiss_notification(mock_hass, call)
+
+    notification.remove_notification.assert_called_once_with(wanted)
     mock_nav.close_panel.assert_not_called()
 
 

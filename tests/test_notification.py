@@ -20,9 +20,17 @@ class _DevStub:
         return default
 
 
+class DummyNavigation:
+    def __init__(self):
+        self.opened = []
+
+    def open_panel(self, panel, **kwargs):
+        self.opened.append((panel, kwargs))
+
+
 class DummyApp:
     def __init__(self):
-        self.controller = {}
+        self.controller = {"navigation": DummyNavigation()}
         self.device = _DevStub()
         self.log_calls = []
         self.call_service_calls = []
@@ -103,6 +111,33 @@ def test_notification_controller_add_remove_clear_get(dummy_app):
     # Clear all
     controller.clear_notifications()
     assert controller.get_notifications() == []
+
+
+def test_notification_controller_force_shows_targeted_notification_with_existing_queue(dummy_app):
+    controller = HAUINotificationController(dummy_app, {})
+    controller.add_notification("Other", "Unrelated", "other-icon")
+
+    controller.send_notification(
+        "Deck heating paused",
+        "Deck door open - floor heating off",
+        "mdi:door-open",
+        force_show=True,
+    )
+
+    from nspanel_haui.haui.mapping.const import SysPanelKey
+
+    assert dummy_app.controller["navigation"].opened == [
+        (
+            SysPanelKey.POPUP_NOTIFY,
+            {
+                "icon": "mdi:door-open",
+                "title": "Deck heating paused",
+                "notification": "Deck door open - floor heating off",
+                "close_on_button": True,
+                "close_timeout": 0,
+            },
+        )
+    ]
 
 
 def test_notification_controller_send_esphome(dummy_app, dummy_esphome):
