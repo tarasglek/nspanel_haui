@@ -164,6 +164,28 @@ send_notification:
       selector:
         boolean:
 
+# ── nspanel_haui.dismiss_notification ──────────────────────
+dismiss_notification:
+  name: Dismiss notification
+  description: >-
+    Remove notifications matching a title from the selected panel, or all
+    panels when no device is selected. Closes only the matching visible popup.
+  fields:
+    device:
+      name: Device
+      description: Target NSPanel device. If omitted, applies to all devices.
+      required: false
+      selector:
+        device:
+          integration: nspanel_haui
+    title:
+      name: Title
+      description: Exact notification title to dismiss.
+      required: true
+      selector:
+        text:
+          type: text
+
 # ── nspanel_haui.reset_last_interaction ──────────────────────
 reset_last_interaction:
   name: Reset last interaction

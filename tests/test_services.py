@@ -165,7 +165,7 @@ class TestRegisterServices:
     def test_registers_all_services(self, mock_hass):
         """All services are registered."""
         async_register_services(mock_hass)
-        assert mock_hass.services.async_register.call_count == 6
+        assert mock_hass.services.async_register.call_count == 7
 
     def test_idempotent(self, mock_hass):
         """Second call skips registration (has_service returns True)."""
@@ -184,6 +184,7 @@ class TestRegisterServices:
         assert SERVICE_WAKEUP in registered
         assert SERVICE_SLEEP in registered
         assert SERVICE_SEND_NOTIFICATION in registered
+        assert "dismiss_notification" in registered
         assert SERVICE_RESET_LAST_INTERACTION in registered
 
 
@@ -349,6 +350,52 @@ async def test_send_notification_persistent_with_timeout(mock_hass, mock_nav, mo
             "force_show": False,
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_dismiss_notification_only_matching_title_and_visible_popup(
+    mock_hass, mock_nav, mock_esphome_ctrl
+):
+    from nspanel_haui.services import _handle_dismiss_notification
+
+    app = _make_app(mock_nav, mock_esphome_ctrl)
+    notification = MagicMock()
+    wanted = ("Deck heating paused", "", "", 0, False, "info", True)
+    other = ("Doorbell", "", "", 0, False, "info", True)
+    notification.get_notifications.return_value = [wanted, other]
+    app.controller["notification"] = notification
+    mock_hass.data[DOMAIN] = {"entry_1": {"dev": app}}
+    mock_nav.panel_kwargs = {"title": "Deck heating paused"}
+    mock_nav.get_current_panel.return_value.get.return_value = "popup_notify"
+    call = MagicMock()
+    call.data = {"title": "Deck heating paused", "device": "dev_1"}
+
+    await _handle_dismiss_notification(mock_hass, call)
+
+    notification.remove_notification.assert_called_once_with(wanted)
+    mock_nav.close_panel.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_dismiss_notification_does_not_close_other_popup(
+    mock_hass, mock_nav, mock_esphome_ctrl
+):
+    from nspanel_haui.services import _handle_dismiss_notification
+
+    app = _make_app(mock_nav, mock_esphome_ctrl)
+    notification = MagicMock()
+    notification.get_notifications.return_value = [("Deck heating paused", "", "", 0, False, "info", True)]
+    app.controller["notification"] = notification
+    mock_hass.data[DOMAIN] = {"entry_1": {"dev": app}}
+    mock_nav.panel_kwargs = {"title": "Doorbell"}
+    mock_nav.get_current_panel.return_value.get.return_value = "popup_notify"
+    call = MagicMock()
+    call.data = {"title": "Deck heating paused", "device": "dev_1"}
+
+    await _handle_dismiss_notification(mock_hass, call)
+
+    notification.remove_notification.assert_called_once()
+    mock_nav.close_panel.assert_not_called()
 
 
 @pytest.mark.asyncio
